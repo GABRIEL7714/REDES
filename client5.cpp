@@ -443,15 +443,13 @@ int main(void) {
         while (true) {
         int opcion=0;    
         std::cout << "\n--- MENÚ ---\n";
-        std::cout << "1. Ver lista de usuarios\n";
-        std::cout << "2. Enviar mensaje\n";
-
-        
-        std::cout << "3. Enviar mensaje a todos\n";
-        std::cout << "4. Enviar archivo a usuario\n";
-        std::cout<<  "5. Join #\n";
-        std::cout<<  "6. enviar posicion #\n";
-        std::cout<<  "7. view #\n";
+        std::cout << "1. Mostrar lista de usuarios\n";
+        std::cout << "2. Enviar mensaje a otro usuario\n";
+        std::cout << "3. Broadcast\n";
+        std::cout << "4. Enviar archivo \n";
+        std::cout<<  "5. Unirse a la partida #\n";
+        std::cout<<  "6. Enviar posicion #\n";
+        std::cout<<  "7. Ver partida #\n";
         std::cout << "8. Salir\n";
         
         std::cout << "Seleccione una opción: ";
