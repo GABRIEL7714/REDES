@@ -284,4 +284,237 @@ void procesarMensajes(std::vector<std::string> pkgs, std::string nickname, int s
         for (auto &trozo : piezas) {
             char buffer[500];
             std::memset(buffer, '#', 500);
-           
+                       std::sprintf(buffer, "%02d%02d", (seq == totalPkg ? 0 : seq), totalPkg);
+            int totalSize = 1 + 5 + nickname.length() + 100 + fileName.length() + 18 + trozo.length() + 5;
+
+            int offset = 4;
+            std::sprintf(buffer + offset, "%05d", totalSize);
+            offset += 5;
+            buffer[offset++] = 'f';
+            std::sprintf(buffer + offset, "%05d", (int)nickname.length());
+            offset += 5;
+            std::memcpy(buffer + offset, nickname.c_str(), nickname.length());
+            offset += nickname.length();
+            std::sprintf(buffer + offset, "%0100d", (int)fileName.length());
+            offset += 100;
+            std::memcpy(buffer + offset, fileName.c_str(), fileName.length());
+            offset += fileName.length();
+            std::sprintf(buffer + offset, "%018d", (int)trozo.length());
+            offset += 18;
+            std::memcpy(buffer + offset, trozo.c_str(), trozo.length());
+            offset += trozo.length();
+            std::memcpy(buffer + offset, hash.c_str(), 5);
+
+            sockaddr_in dest = mapaAddr[destino];
+            sendto(sock, buffer, 500, 0, (sockaddr *)&dest, sizeof(dest));
+            ++seq;
+        }
+    }
+    // MENSAJE Q
+    else if (tipo == 'Q') {
+        printf("\nEl cliente %s ha salido del chat\n", nickname.c_str());
+        mapaAddr.erase(nickname);
+        return;
+    }
+    // MENSAJE J
+    else if (tipo == 'J') {
+        if (!partida.activa && jugadorEnEspera.empty()) {
+            jugadorEnEspera = nickname;
+            sockaddr_in dest = mapaAddr[nickname];
+            enviarM(sock, dest, "wait for player");
+        }
+        else if (!partida.activa && !jugadorEnEspera.empty()) {
+            partida.activa = true;
+            partida.jugadorO = jugadorEnEspera;
+            partida.jugadorX = nickname;
+            jugadorEnEspera = "";
+
+            enviarM(sock, mapaAddr[partida.jugadorO], "inicio");
+            enviarM(sock, mapaAddr[partida.jugadorX], "inicio");
+
+            enviarX_aTodos(sock);
+            enviarT(sock, partida.jugadorO, 'O');
+        }
+        else {
+            enviarM(sock, mapaAddr[nickname], "do you want to see?");
+        }
+    }
+    // MENSAJE V
+    else if (tipo == 'V') {
+        if (partida.activa) {
+            partida.espectadores.push_back(nickname);
+        }
+
+        char pkt[500];
+        std::memset(pkt, '#', 500);
+        std::memcpy(pkt, "0001", 4);
+        std::memcpy(pkt + 4, "00010", 5);
+        pkt[9] = 'X';
+        std::memcpy(pkt + 10, partida.tablero, 9);
+
+        sockaddr_in dest = mapaAddr[nickname];
+        sendto(sock, pkt, 500, 0, (sockaddr *)&dest, sizeof(dest));
+    }
+    // MENSAJE P
+    else if (tipo == 'P') {
+        char pos = pkgs[0][10];
+        char simb = pkgs[0][11];
+
+        int idx = pos - '1';
+        if (idx < 0 || idx > 8 || partida.tablero[idx] != '_') {
+            char errPkt[500];
+            std::memset(errPkt, '#', 500);
+            std::memcpy(errPkt, "0001", 4);
+            std::memcpy(errPkt + 4, "00018", 5);
+
+            int off = 9;
+            errPkt[off++] = 'E';
+            errPkt[off++] = '6';
+            std::memcpy(errPkt + off, "00016", 5);
+            off += 5;
+            std::memcpy(errPkt + off, "Posicion ocupada", 16);
+
+            const sockaddr_in &cliAddr = mapaAddr[nickname];
+            sendto(sock, errPkt, 500, 0, (const sockaddr *)&cliAddr, sizeof(cliAddr));
+            return;
+        }
+
+        partida.tablero[idx] = simb;
+
+        if (ganador(simb)) {
+            enviarX_aTodos(sock);
+            sleep(0.5);
+
+            auto enviaResultado = [&](const std::string &nick, char res) {
+                char pkt[500];
+                std::memset(pkt, '#', 500);
+                std::memcpy(pkt, "0001", 4);
+                std::memcpy(pkt + 4, "00002", 5);
+                pkt[9] = 'O';
+                pkt[10] = res;
+                sendto(sock, pkt, 500, 0, (sockaddr *)&mapaAddr[nick], sizeof(sockaddr_in));
+            };
+
+            enviaResultado(partida.jugadorO, (simb == 'O') ? 'W' : 'L');
+            enviaResultado(partida.jugadorX, (simb == 'X') ? 'W' : 'L');
+            for (auto &esp : partida.espectadores) {
+                enviaResultado(esp, 'E');
+            }
+
+            partida = Partida();
+        }
+        else if (tableroLleno()) {
+            enviarX_aTodos(sock);
+
+            char pkt[500];
+            std::memset(pkt, '#', 500);
+            std::memcpy(pkt, "0001", 4);
+            std::memcpy(pkt + 4, "00002", 5);
+            pkt[9] = 'O';
+            pkt[10] = 'E';
+
+            for (auto nick : {partida.jugadorO, partida.jugadorX}) {
+                sendto(sock, pkt, 500, 0, (sockaddr *)&mapaAddr[nick], sizeof(sockaddr_in));
+            }
+            for (auto &esp : partida.espectadores) {
+                sendto(sock, pkt, 500, 0, (sockaddr *)&mapaAddr[esp], sizeof(sockaddr_in));
+            }
+
+            partida = Partida();
+        }
+        else {
+            enviarX_aTodos(sock);
+            partida.turno = (partida.turno == 'O') ? 'X' : 'O';
+            const std::string &prox = (partida.turno == 'O') ? partida.jugadorO : partida.jugadorX;
+            enviarT(sock, prox, partida.turno);
+        }
+    }
+}
+
+int main(void) {
+    char buffer[500];
+    int sock;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len = sizeof(struct sockaddr);
+
+    if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
+        perror("socket");
+        exit(1);
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(5000);
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    bzero(&(server_addr.sin_zero), 8);
+
+    if (bind(sock, (struct sockaddr *)&server_addr, sizeof(struct sockaddr)) == -1) {
+        perror("Bind");
+        exit(1);
+    }
+
+    sockaddr_in cli;
+    socklen_t cliLen = sizeof(cli);
+
+    for (;;) {
+        int n = recvfrom(sock, buffer, 500, 0, (sockaddr *)&cli, &cliLen);
+        if (n != 500) {
+            std::cout << "ERROR size mensaje\n";
+            continue;
+        }
+
+        char clave[32];
+        sprintf(clave, "%s:%d", inet_ntoa(cli.sin_addr), ntohs(cli.sin_port));
+
+        std::string pkg(buffer, 500);
+
+        if (pkg[9] == 'N') {
+            int tamNick = std::stoi(pkg.substr(4, 5)) - 1;
+            std::string nick = pkg.substr(10, tamNick);
+            mapaAddr[nick] = cli;
+            std::cout << "El cliente " << nick.c_str() << " se ha unido al chat\n";
+            continue;
+        }
+
+        std::string nick;
+        for (auto &kv : mapaAddr) {
+            if (memcmp(&kv.second, &cli, sizeof(cli)) == 0) {
+                nick = kv.first;
+                break;
+            }
+        }
+        if (nick.empty()) continue;
+
+        int seq = std::stoi(std::string(pkg, 0, 2));
+        int tot = std::stoi(std::string(pkg, 2, 2));
+        int idx = (seq == 0) ? tot - 1 : seq - 1;
+
+        auto &vc = clientePkgs[clave];
+        if (vc.empty()) {
+            vc.resize(tot);
+        }
+
+        if (idx >= tot) continue;
+        if (!vc[idx].empty()) continue;
+
+        vc[idx] = std::move(pkg);
+
+        bool completo = true;
+        for (auto &p : vc) {
+            if (p.empty()) {
+                completo = false;
+                break;
+            }
+        }
+
+        if (completo) {
+            char tipo = vc[0][9];
+            std::vector<std::string> partes = std::move(vc);
+            clientePkgs.erase(clave);
+
+            std::thread(procesarMensajes, std::move(partes), nick, sock, tipo).detach();
+        }
+    }
+
+    close(sock);
+    return 0;
+}
