@@ -9,13 +9,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <iostream> // std::cout
-#include <thread>   // std::thread, std::this_thread::sleep_for
+#include <iostream>
+#include <thread>   
 #include <chrono>
 #include <string>
 #include <atomic>
 #include <limits>
-#include <fstream> // Para manejo de archivos
+#include <fstream> 
 #include <vector>
 #include <mutex>
 #include <cstring>
@@ -76,9 +76,8 @@ void recibirMensajes(int sock, sockaddr_in server_addr)
       continue;
     }
 
-    std::string pkg(buffer, 500); // incluye ‘#’
+    std::string pkg(buffer, 500); 
 
-    /* ------------- campos de fragmentación ---------------------- */
     int seq = std::stoi(pkg.substr(0, 2)); // “00”,“01”,…
     int tot = std::stoi(pkg.substr(2, 2)); // “01”…“99”
     int idx = (seq == 0) ? tot - 1         // 00 → último
@@ -130,7 +129,7 @@ void procesarMensajes(std::vector<std::string> pkgs, std::string nickname, int s
   {
     // reconstruir mensaje
     std::string mensaje;
-    for (size_t i = 0; i < pkgs.size(); ++i) // en orden secuencia
+    for (size_t i = 0; i < pkgs.size(); ++i) 
     {
       int t = std::stoi(pkgs[i].substr(4, 5)) - 1; // tamMsg - 1 del tipo
       mensaje += pkgs[i].substr(10, t);
@@ -194,12 +193,12 @@ void procesarMensajes(std::vector<std::string> pkgs, std::string nickname, int s
   // Mensaje f
   else if (tipo == 'f')
   {
-    int tamEmisor = std::stoi(pkgs[0].substr(10, 5));                                        // 5B tamDest
-    std::string emisor = pkgs[0].substr(15, tamEmisor);                                      // destinatario
-    int tamFileName = std::stoi(pkgs[0].substr(15 + tamEmisor, 100));                        // 100B tamFN
-    std::string fileName = pkgs[0].substr(15 + tamEmisor + 100, tamFileName);                // filename
-    long tamFile = std::stol(pkgs[0].substr(15 + tamEmisor + 100 + tamFileName, 18));        // 18B tamFile
-    std::string hash = pkgs[0].substr(15 + tamEmisor + 100 + tamFileName + 18 + tamFile, 5); // hash
+    int tamEmisor = std::stoi(pkgs[0].substr(10, 5));                                        
+    std::string emisor = pkgs[0].substr(15, tamEmisor);                                      
+    int tamFileName = std::stoi(pkgs[0].substr(15 + tamEmisor, 100));                       
+    std::string fileName = pkgs[0].substr(15 + tamEmisor + 100, tamFileName);                
+    long tamFile = std::stol(pkgs[0].substr(15 + tamEmisor + 100 + tamFileName, 18));        
+    std::string hash = pkgs[0].substr(15 + tamEmisor + 100 + tamFileName + 18 + tamFile, 5); 
 
     // reconstruir archivo
     std::string archivo;
