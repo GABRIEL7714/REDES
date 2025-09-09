@@ -5,13 +5,10 @@
 #include <arpa/inet.h>
 #include <sstream>
 #include <iomanip>
-#include <fstream>
-#include <openssl/sha.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-
+#include <mutex>
 
 using namespace std;
+
 string formatear_numeron(int numero) {
     stringstream ss;
     ss << setw(2) << setfill('0') << numero;
@@ -22,82 +19,104 @@ string formatear_numerov(int numero) {
     ss << setw(3) << setfill('0') << numero;
     return ss.str();
 }
+
+ssize_t readN(int sock, void* buffer, size_t n) {
+    size_t total = 0;
+    char* buf = (char*)buffer;
+    while (total < n) {
+        ssize_t bytes = read(sock, buf + total, n - total);
+        if (bytes <= 0) return -1; // error o desconexión
+        total += bytes;
+    }
+    return total;
+}
+
+ssize_t writeN(int sock, const void* buffer, size_t n) {
+    size_t total = 0;
+    const char* buf = (const char*)buffer;
+    while (total < n) {
+        ssize_t bytes = write(sock, buf + total, n - total);
+        if (bytes <= 0) return -1;
+        total += bytes;
+    }
+    return total;
+}
+
 void recibir_mensajes(int socket_cliente) {
-    char buffer[110];
+    char buffer[300];
+
     while (true) {
-        int bytes_recibidos = read(socket_cliente, buffer, 1);  // Primero recibes los 5 bytes de tamaño
-        if (bytes_recibidos <= 0) {
-            cout << "Conexión cerrada o error al recibir." << endl;
+        int n = readN(socket_cliente, buffer, 1); // Leer tipo de mensaje
+        if (n <= 0) {
+            cout << "\nConexión cerrada o error al recibir." << endl;
             break;
         }
 
-       
-        if (buffer[0] == 'T') {
-            char contenido[300];
-            int n = read(socket_cliente,contenido,2);
-            contenido[n] = '\0';
-            int tamano_enviador = atoi(contenido);
-             n = read(socket_cliente,contenido,tamano_enviador);
-            string enviador=contenido;
-            contenido[n] = '\0';
+        char tipo = buffer[0];
 
-             n = read(socket_cliente,contenido,3);
-            contenido[n] = '\0';
+        if (tipo == 'T') {
+            // Mensaje privado
+            if (readN(socket_cliente, buffer, 2) <= 0) break;
+            int tamano_enviador = atoi(buffer);
 
-            int tamano_mensaje = atoi(contenido);
-             n = read(socket_cliente,contenido,tamano_mensaje);
-            contenido[n] = '\0';
+            if (readN(socket_cliente, buffer, tamano_enviador) <= 0) break;
+            string enviador(buffer, tamano_enviador);
 
-            string mensaje = contenido;
-            printf("%s dice : %s",enviador,mensaje);
-;
-        } 
-        else if (buffer[0]  == 'M') {
-            char contenido[300];
-            int n = read(socket_cliente,contenido,2);
-            contenido[n] = '\0';
-            int tamano_enviador = atoi(contenido);
-            n = read(socket_cliente,contenido,tamano_enviador);
-            string enviador=contenido;
-            contenido[n] = '\0';
+            if (readN(socket_cliente, buffer, 3) <= 0) break;
+            int tamano_mensaje = atoi(buffer);
 
-            n = read(socket_cliente,contenido,3);
-            contenido[n] = '\0';
+            if (readN(socket_cliente, buffer, tamano_mensaje) <= 0) break;
+            string mensaje(buffer, tamano_mensaje);
 
-            int tamano_mensaje = atoi(contenido);
-            n = read(socket_cliente,contenido,tamano_mensaje);
-            contenido[n] = '\0';
-
-            string mensaje = contenido;
-            printf("%s dice : %s",enviador,mensaje);
-
+            cout << "\n[PRIVADO] " << enviador << " dice: " << mensaje << endl;
         }
-        else if (buffer[0] == 'L') {
 
-            string nombres="";
-            char contenido[300];
-            int n = read(socket_cliente,contenido,2);
-            int numero_clientes = atoi(contenido);
-            contenido[n] = '\0';
-            for(int i=0;i<numero_clientes;i++){
-                n = read(socket_cliente,contenido,2);
-                int tamano_nombre = atoi(contenido);
-                contenido[n] = '\0';
-                n = read(socket_cliente,contenido,tamano_nombre);
-                string nombre = contenido;
-                contenido[n] = '\0';
+        else if (tipo == 'M') {
+            // Broadcast
+            if (readN(socket_cliente, buffer, 2) <= 0) break;
+            int tamano_enviador = atoi(buffer);
+
+            if (readN(socket_cliente, buffer, tamano_enviador) <= 0) break;
+            string enviador(buffer, tamano_enviador);
+
+            if (readN(socket_cliente, buffer, 2) <= 0) break; // corregido a 2 digitos
+            int tamano_mensaje = atoi(buffer);
+
+            if (readN(socket_cliente, buffer, tamano_mensaje) <= 0) break;
+            string mensaje(buffer, tamano_mensaje);
+
+            cout << "\n[BROADCAST] " << enviador << " dice: " << mensaje << endl;
+        }
+
+        else if (tipo == 'L') {
+            // Lista de usuarios
+            if (readN(socket_cliente, buffer, 1) <= 0) break;
+            int numero_clientes = buffer[0] - '0'; // tamaño pequeño
+
+            string nombres = "";
+            for (int i = 0; i < numero_clientes; i++) {
+                if (readN(socket_cliente, buffer, 2) <= 0) break;
+                int tamano_nombre = atoi(buffer);
+
+                if (readN(socket_cliente, buffer, tamano_nombre) <= 0) break;
+                string nombre(buffer, tamano_nombre);
+
                 nombres += nombre + " ";
-
-            } 
-            cout << "Lista de usuarios conectados:\n" << nombres<< endl;
-
-
-        } else {
-            cout << "Tipo de mensaje desconocido: " << endl;
+            }
+            cout << "\nUsuarios conectados: " << nombres << endl;
+        }
+        else if(tipo=='E'){
+            if (readN(socket_cliente, buffer, 3) <= 0) break;
+            int tamano_mensaje = atoi(buffer);
+            if (readN(socket_cliente, buffer, tamano_mensaje) <= 0) break;
+            string mensaje = buffer;
+            cout<<mensaje<<endl;
+        }
+        else {
+            cout << "\n[!] Mensaje desconocido: " << tipo << endl;
         }
     }
 }
-
 
 int main() {
     int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -126,7 +145,7 @@ int main() {
         cout << "3. Mostrar lista de usuarios" << endl;
         cout << "4. Enviar un mensaje a todos" << endl;
         cout << "5. Salir" << endl;
-        cout << "Elige una opción: ";
+        cout << "Opción: ";
 
         int opcion;
         cin >> opcion;
@@ -137,39 +156,49 @@ int main() {
             cout << "Nombre del nuevo usuario: ";
             getline(cin, nombre);
 
-            string protocolo = "n"+ formatear_numeron((int)nombre.size())+nombre;
-            write(socket_fd, protocolo.c_str(), protocolo.size());
+            string protocolo = "n" + formatear_numeron((int)nombre.size()) + nombre;
+            cout<<"Protocolo : "<<protocolo<<endl;
+            writeN(socket_fd, protocolo.c_str(), protocolo.size());
+        }
 
-        } 
         else if (opcion == 2) {
             string mensaje, receptor;
-            cout << "Mensaje: ";
-            cin.ignore(); // Limpiar buffer de entrada
-            getline(cin, mensaje);
             cout << "Receptor: ";
             getline(cin, receptor);
-        
-            string protocolo = "t" +formatear_numeron((int)receptor.size())+receptor + formatear_numerov((int)mensaje.size()) + mensaje;  // Mensaje y receptor separados por #
-            write(socket_fd, protocolo.c_str(), (int)protocolo.size());
+            cout << "Mensaje: ";
+            getline(cin, mensaje);
+
+            string protocolo = "t" + formatear_numeron((int)receptor.size()) + receptor +
+                               formatear_numerov((int)mensaje.size()) + mensaje;
+            cout<<"Protocolo : "<<protocolo<<endl;
+            writeN(socket_fd, protocolo.c_str(), protocolo.size());
         }
-        
+
         else if (opcion == 3) {
-            string  protocolo = "l";
-            write(socket_fd, protocolo.c_str(), 1);
-
+            string protocolo = "l";
+            cout<<"Protocolo : "<<protocolo<<endl;
+            writeN(socket_fd, protocolo.c_str(), protocolo.size());
         }
-        else if(opcion ==4){
-            string mensaje = "";
-            cout<<"Mensaje : ";
-            getline(cin,mensaje);
 
-            string protocolo = "m" +formatear_numerov((int)(mensaje.size())) + mensaje;
-            write(socket_fd,protocolo.c_str(),(int)protocolo.size());
-        
+        else if (opcion == 4) {
+            string mensaje;
+            cout << "Mensaje: ";
+            getline(cin, mensaje);
+
+            string protocolo = "m" + formatear_numerov((int)mensaje.size()) + mensaje;
+            cout<<"Protocolo : "<<protocolo<<endl;
+            writeN(socket_fd, protocolo.c_str(), protocolo.size());
         }
+
         else if (opcion == 5) {
+            cout << "Cerrando cliente..." << endl;
+            writeN(socket_fd,"X",1);
             break;
-        } 
+        }
+
+        else {
+            cout << "Opción inválida." << endl;
+        }
     }
 
     close(socket_fd);
