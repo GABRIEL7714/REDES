@@ -27,6 +27,12 @@ string formatear_numerov(int numero) {
     return ss.str();
 }
 
+string formatear_numerod(int numero) {
+    stringstream ss;
+    ss << setw(10) << setfill('0') << numero;
+    return ss.str();
+}
+
 void broadcast(const string &msg, int remitente) {
     lock_guard<mutex> lock(mapMutex);
     for (auto &kv : mapSockets) {
@@ -124,11 +130,21 @@ void readSocketThread(int clientSock) {
         else if (tipo == 'f') {
             n = read(clientSock, buffer, 2);
             buffer[n] = '\0';
+            int tamDest = atoi(buffer);
+            n = read(clientSock, buffer, tamDest);
+            buffer[n] = '\0';
+            string destinatario(buffer,n);
+
+            n = read(clientSock, buffer, 3);
+            buffer[n] = '\0';
             int tamNom = atoi(buffer);
             n = read(clientSock, buffer, tamNom);
             string nombreArchivo(buffer, n);
 
-            n = read(clientSock, buffer, 3);
+            //modificamos nombre
+            nombreArchivo.erase(nombreArchivo.length()-4,4);
+            nombreArchivo+= "_dest.txt";
+            n = read(clientSock, buffer, 10);
             buffer[n] = '\0';
             int tamArchivo = atoi(buffer);
 
@@ -156,7 +172,7 @@ void readSocketThread(int clientSock) {
 
             cout << "Archivo recibido de " << remitente << ": " << ruta << endl;
 
-            string protocolo = "F" + formatear_numeron(nombreArchivo.size()) + nombreArchivo +
+            string protocolo = "F" + formatear_numerod((int)nombreArchivo.size()) + nombreArchivo + formatear_numeron(nombreArchivo.size()) + nombreArchivo +
                                formatear_numerov(datos.size()) + datos;
             broadcast(protocolo, clientSock);
         }
