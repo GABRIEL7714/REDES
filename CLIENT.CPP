@@ -20,6 +20,12 @@ string formatear_numerov(int numero) {
     return ss.str();
 }
 
+string formatear_numerod(int numero) {
+    stringstream ss;
+    ss << setw(10) << setfill('0') << numero;
+    return ss.str();
+}
+
 void recibir_mensajes(int socket_cliente) {
     char buffer[1024];
     while (true) {
@@ -161,7 +167,7 @@ int main() {
             write(socket_fd, protocolo.c_str(), protocolo.size());
         }
         else if (opcion == 5) {
-            string nombre_archivo;
+            string nombre_archivo,destinatario;
             cout << "Nombre del archivo .txt a enviar: ";
             getline(cin, nombre_archivo);
 
@@ -171,11 +177,16 @@ int main() {
                 continue;
             }
 
+            cout << "Nombre del destinatario :  ";
+            getline(cin,destinatario);
+
+
+
             string contenido((istreambuf_iterator<char>(in)), istreambuf_iterator<char>());
             in.close();
 
-            string protocolo = "f" + formatear_numeron(nombre_archivo.size()) + nombre_archivo +
-                               formatear_numerov(contenido.size()) + contenido;
+            string protocolo = "f" +  formatear_numeron((int)destinatario.size()) + destinatario +   formatear_numerov(nombre_archivo.size()) + nombre_archivo +
+                               formatear_numerod(contenido.size()) + contenido;
 
             write(socket_fd, protocolo.c_str(), protocolo.size());
             cout << "Archivo enviado: " << nombre_archivo << endl;
