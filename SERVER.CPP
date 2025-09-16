@@ -1,20 +1,21 @@
-#include <iostream>
-#include <thread>
-#include <map>
-#include <mutex>
-#include <vector>
-#include <sstream>
-#include <iomanip>
-#include <cstring>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <fstream>
-#include <sys/stat.h>   // mkdir
+#include <iostream>     
+#include <thread>       
+#include <cstring>      
+#include <unistd.h>     
+#include <arpa/inet.h>  
+#include <sstream>      
+#include <iomanip>      
+#include <fstream>      
+#include <sys/types.h>  
+#include <sys/stat.h>   
+#include <map>          
+#include <mutex>        
+
 
 using namespace std;
 
-map<int, string> mapSockets;
-mutex mapMutex;
+std::map<string, int> mapSockets;
+std::mutex mapMutex;
 
 string formatear_numeron(int numero) {
     stringstream ss;
@@ -27,195 +28,236 @@ string formatear_numerov(int numero) {
     return ss.str();
 }
 
-string formatear_numerod(int numero) {
-    stringstream ss;
-    ss << setw(10) << setfill('0') << numero;
-    return ss.str();
-}
-
-void broadcast(const string &msg, int remitente) {
-    lock_guard<mutex> lock(mapMutex);
-    for (auto &kv : mapSockets) {
-        if (kv.first != remitente) {
-            write(kv.first, msg.c_str(), msg.size());
-        }
+ssize_t readN(int sock, void* buffer, size_t n) {
+    size_t total = 0;
+    char* buf = (char*)buffer;
+    while (total < n) {
+        ssize_t bytes = read(sock, buf + total, n - total);
+        if (bytes <= 0) return -1; // error o desconexión
+        total += bytes;
     }
+    return total;
 }
 
-void readSocketThread(int clientSock) {
-    char buffer[1024];
+ssize_t writeN(int sock, const void* buffer, size_t n) {
+    size_t total = 0;
+    const char* buf = (const char*)buffer;
+    while (total < n) {
+        ssize_t bytes = write(sock, buf + total, n - total);
+        if (bytes <= 0) return -1;
+        total += bytes;
+    }
+    return total;
+}
+
+void readSocketThread(int cliSocket) {
+    char buffer[300];
+    int n;
+    string miNombre = "";
 
     while (true) {
-        int n = read(clientSock, buffer, 1);
-        if (n <= 0) {
-            lock_guard<mutex> lock(mapMutex);
-            cout << "Cliente desconectado: " << mapSockets[clientSock] << endl;
-            mapSockets.erase(clientSock);
-            close(clientSock);
-            return;
-        }
+        // Leer comando (1 byte)
+        n = readN(cliSocket, buffer, 1);
+        if (n <= 0) break;
 
-        char tipo = buffer[0];
+        char cmd = buffer[0];
 
-        if (tipo == 'n') {
-            n = read(clientSock, buffer, 2);
-            buffer[n] = '\0';
-            int tam = atoi(buffer);
-            n = read(clientSock, buffer, tam);
-            string nombre(buffer, n);
-
+        if (cmd == 'l') {
+            // Listar usuarios
+            string msg;
             {
                 lock_guard<mutex> lock(mapMutex);
-                mapSockets[clientSock] = nombre;
+                msg = "L" + to_string(mapSockets.size());
+                for (auto &it : mapSockets) {
+                    msg += formatear_numeron((int)it.first.size()) + it.first;
+                }
             }
-            cout << "Nuevo usuario registrado: " << nombre << endl;
+            cout<<"Protocolo : "<<msg<<endl;
+            if (writeN(cliSocket, msg.c_str(), msg.size()) <= 0) break;
         }
-        else if (tipo == 't') {
-            n = read(clientSock, buffer, 2);
-            buffer[n] = '\0';
-            int tamReceptor = atoi(buffer);
-            n = read(clientSock, buffer, tamReceptor);
-            string receptor(buffer, n);
 
-            n = read(clientSock, buffer, 3);
-            buffer[n] = '\0';
-            int tamMsg = atoi(buffer);
-            n = read(clientSock, buffer, tamMsg);
-            string mensaje(buffer, n);
+        else if (cmd == 't') {
+            // Leer destinatario
+            if (readN(cliSocket, buffer, 2) <= 0) break;
+            int tamano_dest = atoi(buffer);
 
-            string remitente;
-            {
-                lock_guard<mutex> lock(mapMutex);
-                remitente = mapSockets[clientSock];
+            if (readN(cliSocket, buffer, tamano_dest) <= 0) break;
+            string destinatario(buffer, tamano_dest);
+
+            // Leer mensaje
+            if (readN(cliSocket, buffer, 3) <= 0) break;
+            int tamano_msg = atoi(buffer);
+
+            if (readN(cliSocket, buffer, tamano_msg) <= 0) break;
+            string mensaje(buffer, tamano_msg);
+
+            // Reenviar al destinatario
+            lock_guard<mutex> lock(mapMutex);
+            if (mapSockets.find(destinatario) != mapSockets.end()) {
+                string protocolo = "T" + formatear_numeron((int)miNombre.size()) + miNombre +
+                                   formatear_numerov((int)mensaje.size()) + mensaje;
+                cout<<"Protocolo : "<<protocolo<<endl;
+
+                if (writeN(mapSockets[destinatario], protocolo.c_str(), protocolo.size()) <= 0) {
+                    cerr << "Error enviando a " << destinatario << endl;
+                }
+            } else {
+                string error = "Usuario no encontrado.";
+                writeN(cliSocket, error.c_str(), error.size());
             }
+        }
 
-            cout << remitente << " -> " << receptor << ": " << mensaje << endl;
+        else if (cmd == 'n') {
+            // Leer nombre
+            if (readN(cliSocket, buffer, 2) <= 0) break;
+            int tamano = atoi(buffer);
+
+            if (readN(cliSocket, buffer, tamano) <= 0) break;
+            string newUser(buffer, tamano);
+            if(mapSockets.find(newUser)!=mapSockets.end()){
+                string error = newUser + "is already taken";
+                string protocolo = "E" + formatear_numerov((int)newUser.size()) + error;
+                cout<<"Protocolo : "<<protocolo<<endl;
+                writeN(cliSocket,protocolo.c_str(),(int)protocolo.size());
+            }
+            else{
+
+                {
+                    lock_guard<mutex> lock(mapMutex);
+                    mapSockets[newUser] = cliSocket;
+                }
+
+            miNombre = newUser;
+            cout << "Usuario " << miNombre << " añadido." << endl;
+            }
+        }
+
+        else if (cmd == 'm') {
+            // Leer mensaje broadcast
+            if (readN(cliSocket, buffer, 3) <= 0) break;
+            int tamano_msg = atoi(buffer);
+
+            if (readN(cliSocket, buffer, tamano_msg) <= 0) break;
+            string mensaje(buffer, tamano_msg);
+
+            string enviador = miNombre;
+
+            string mensaje_ = "M" + formatear_numeron((int)enviador.size()) + enviador +
+                              formatear_numeron((int)mensaje.size()) + mensaje;
+            cout<<"Protocolo : "<<mensaje<<endl;
 
             lock_guard<mutex> lock(mapMutex);
-            for (auto &kv : mapSockets) {
-                if (kv.second == receptor) {
-                    string protocolo = "T" + formatear_numeron(remitente.size()) + remitente +
-                                       formatear_numerov(mensaje.size()) + mensaje;
-                    write(kv.first, protocolo.c_str(), protocolo.size());
+            for (const auto &[nombre, sock] : mapSockets) {
+                if (sock != cliSocket) {
+                    writeN(sock, mensaje_.c_str(), mensaje_.size());
                 }
             }
         }
-        else if (tipo == 'm') {
-            n = read(clientSock, buffer, 3);
-            buffer[n] = '\0';
-            int tamMsg = atoi(buffer);
-            n = read(clientSock, buffer, tamMsg);
-            string mensaje(buffer, n);
-
-            string remitente;
-            {
-                lock_guard<mutex> lock(mapMutex);
-                remitente = mapSockets[clientSock];
-            }
-
-            cout << remitente << " (a todos): " << mensaje << endl;
-
-            string protocolo = "M" + formatear_numeron(remitente.size()) + remitente +
-                               formatear_numerov(mensaje.size()) + mensaje;
-            broadcast(protocolo, clientSock);
-        }
-        else if (tipo == 'l') {
-            lock_guard<mutex> lock(mapMutex);
-            string lista = "L" + formatear_numeron(mapSockets.size());
-            for (auto &kv : mapSockets) {
-                lista += formatear_numeron(kv.second.size()) + kv.second;
-            }
-            write(clientSock, lista.c_str(), lista.size());
-        }
-        else if (tipo == 'f') {
-            n = read(clientSock, buffer, 2);
-            buffer[n] = '\0';
-            int tamDest = atoi(buffer);
-            n = read(clientSock, buffer, tamDest);
-            buffer[n] = '\0';
-            string destinatario(buffer,n);
-
-            n = read(clientSock, buffer, 3);
-            buffer[n] = '\0';
-            int tamNom = atoi(buffer);
-            n = read(clientSock, buffer, tamNom);
-            string nombreArchivo(buffer, n);
-
-            //modificamos nombre
-            nombreArchivo.erase(nombreArchivo.length()-4,4);
-            nombreArchivo+= "_dest.txt";
-            n = read(clientSock, buffer, 10);
-            buffer[n] = '\0';
-            int tamArchivo = atoi(buffer);
-
-            string datos;
-            datos.resize(tamArchivo);
-            int recibidos = 0;
-            while (recibidos < tamArchivo) {
-                int leidos = read(clientSock, &datos[recibidos], tamArchivo - recibidos);
-                if (leidos <= 0) break;
-                recibidos += leidos;
-            }
-
+        else if (cmd == 'f') {
+            // Destinatario
+            if (readN(cliSocket, buffer, 2) <= 0) break;
+            int tamano_dest = atoi(buffer);
+        
+            if (readN(cliSocket, buffer, tamano_dest) <= 0) break;
+            string destinatario(buffer, tamano_dest);
+        
+            // Nombre archivo
+            if (readN(cliSocket, buffer, 3) <= 0) break;
+            int tamano_nombre = atoi(buffer);
+        
+            if (readN(cliSocket, buffer, tamano_nombre) <= 0) break;
+            string nombre_archivo(buffer, tamano_nombre);
+        
+            // Tamaño archivo
+            char sizebuf[11];
+            if (readN(cliSocket, sizebuf, 10) <= 0) break;
+            sizebuf[10] = '\0';
+            int tamano_archivo = atoi(sizebuf);
+        
+            // Contenido
+            string contenido(tamano_archivo, '\0');
+            if (readN(cliSocket, &contenido[0], tamano_archivo) <= 0) break;
+        
+            // Guardar archivo en el servidor
             mkdir("archivos_recibidos", 0777);
-
-            string ruta = "archivos_recibidos/" + nombreArchivo;
-            ofstream out(ruta);
-            out << datos;
+            string ruta = "archivos_recibidos/" + nombre_archivo;
+            ofstream out(ruta, ios::binary);
+            out.write(contenido.data(), contenido.size());
             out.close();
-
-            string remitente;
-            {
-                lock_guard<mutex> lock(mapMutex);
-                remitente = mapSockets[clientSock];
+        
+            cout << "Archivo recibido de " << miNombre 
+                 << " para " << destinatario 
+                 << ": " << nombre_archivo 
+                 << " (" << tamano_archivo << " bytes)" << endl;
+        
+            // Reenviar al destinatario
+            lock_guard<mutex> lock(mapMutex);
+            if (mapSockets.find(destinatario) != mapSockets.end()) {
+                stringstream ss;
+                ss << "f"
+                   << formatear_numeron((int)miNombre.size()) << miNombre
+                   << setw(3) << setfill('0') << (int)nombre_archivo.size() << nombre_archivo
+                   << setw(10) << setfill('0') << tamano_archivo
+                   << contenido;
+        
+                string protocolo = ss.str();
+                writeN(mapSockets[destinatario], protocolo.c_str(), protocolo.size());
             }
-
-            cout << "Archivo recibido de " << remitente << ": " << ruta << endl;
-
-            string protocolo = "F" + formatear_numerod((int)nombreArchivo.size()) + nombreArchivo + formatear_numeron(nombreArchivo.size()) + nombreArchivo +
-                               formatear_numerov(datos.size()) + datos;
-            broadcast(protocolo, clientSock);
         }
-        else {
-            cout << "Tipo desconocido recibido" << endl;
+        
+        else if(cmd=='X'){
+            break;
         }
+
+    }
+
+    shutdown(cliSocket, SHUT_RDWR);
+    close(cliSocket);
+
+    if (!miNombre.empty()) {
+        lock_guard<mutex> lock(mapMutex);
+        mapSockets.erase(miNombre);
+        cout << "Usuario " << miNombre << " desconectado." << endl;
     }
 }
 
-int main() {
+int main(void) {
+    struct sockaddr_in stSockAddr;
     int SocketFD = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+
     if (SocketFD == -1) {
-        perror("socket");
+        perror("can not create socket");
         exit(EXIT_FAILURE);
     }
 
-    sockaddr_in stSockAddr{};
-    memset(&stSockAddr, 0, sizeof(stSockAddr));
+    memset(&stSockAddr, 0, sizeof(struct sockaddr_in));
     stSockAddr.sin_family = AF_INET;
     stSockAddr.sin_port = htons(45000);
     stSockAddr.sin_addr.s_addr = INADDR_ANY;
 
-    if (bind(SocketFD, (sockaddr *)&stSockAddr, sizeof(stSockAddr)) == -1) {
-        perror("bind");
+    if (bind(SocketFD, (const struct sockaddr *)&stSockAddr, sizeof(struct sockaddr_in)) == -1) {
+        perror("error bind failed");
         close(SocketFD);
         exit(EXIT_FAILURE);
     }
 
     if (listen(SocketFD, 10) == -1) {
-        perror("listen");
+        perror("error listen failed");
         close(SocketFD);
         exit(EXIT_FAILURE);
     }
 
-    cout << "Servidor escuchando en puerto 45000..." << endl;
+    cout << "Servidor iniciado en puerto 45000..." << endl;
 
-    while (true) {
-        int clientSock = accept(SocketFD, NULL, NULL);
-        if (clientSock < 0) {
-            perror("accept");
-            continue;
+    for (;;) {
+        int ClientFD = accept(SocketFD, NULL, NULL);
+        if (ClientFD < 0) {
+            perror("error accept failed");
+            close(SocketFD);
+            exit(EXIT_FAILURE);
         }
-        thread(readSocketThread, clientSock).detach();
+
+        std::thread(readSocketThread, ClientFD).detach();
     }
 
     close(SocketFD);
